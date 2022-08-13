@@ -1,0 +1,498 @@
+# Install all needed packages
+```{r}
+install.packages("dplyr")
+install.packages("Hmisc")
+install.packages("caret")
+install.packages("hash")
+#Decision tree
+install.packages("party")
+install.packages("rpart")
+install.packages("rpart.plot")
+install.packages("superml")
+#xgboost
+install.packages("xgboost")
+install.packages("readr")
+install.packages("stringr")
+install.packages("car")
+#neural network
+install.packages("tensorflow")
+library('tensorflow')
+install_tensorflow()
+install.packages("keras")
+#ROC curve
+install.packages("pROC")
+
+
+#Market busket analysis
+
+install.packages("arules")
+install.packages("arulesViz")
+install.packages('reticulate')
+install.packages('keras')
+install.packages("readr")
+install.packages("RColorBrewer")
+
+```
+
+# Load the dataset
+```{r}
+churn_data= read.csv('Churn Dataset.csv') 
+```
+
+# Q1
+Scatter plot matrix to show the relationship between variables
+```{r}
+library("dplyr")
+numeric_df=select_if(churn_data,is.numeric)
+numeric_df$SeniorCitizen=NULL
+plot(numeric_df)
+```
+heatmap to determine correlated attributes
+```{r}
+library(Hmisc)
+ccs=as.matrix(numeric_df)
+correlation=rcorr(ccs, type="pearson") # You can also use "spearman"
+correlation_matrix=data.matrix(correlation$r)
+correlation_matrix
+heatmap(correlation_matrix)
+```
+# Q2 
+Remove redundant information
+Drop unnecessary columns like customerID
+```{r}
+churn_data$customerID=NULL
+churn_data
+```
+Check the summary for missing values 
+```{r}
+summary(churn_data)
+```
+According to summary the TotalChanges column has null vales. 
+## Impute missing Data 
+### Imputing missing values with median in Totalcharges column 
+```{r}
+library(Hmisc)
+churn_data$TotalCharges=impute(churn_data$TotalCharges,median)
+# summary(churn_data)
+```
+Drop duplicated 
+```{r}
+sum(duplicated(churn_data))
+churn_data=churn_data[!duplicated(churn_data),]
+sum(duplicated(churn_data))
+```
+
+Convert categorical to numerical values
+
+```{r}
+library(caret)
+
+dummy = dummyVars(" ~ .", data=churn_data)
+churn_data = data.frame(predict(dummy, newdata = churn_data))
+churn_data
+```
+
+```{r}
+churn_data$ChurnNo=NULL
+colnames(churn_data)[which(names(churn_data) == "ChurnYes")]= "Churn"
+
+```
+
+
+Q3 
+Split the dataset into 80 training/20 test set
+```{r}
+set.seed(42) 
+training_samples <- sample.int(n = nrow(churn_data), size = floor(.8*nrow(churn_data)), replace = F)
+df_train <- churn_data[training_samples, ]
+df_test  <- churn_data[-training_samples, ]
+
+```
+Split the target and featuers 
+
+```{r}
+X_train=select(df_train,-Churn)
+X_test=select(df_test,-Churn)
+y_train=df_train$Churn
+y_test=df_test$Churn
+```
+
+## Decition Tree
+```{r}
+library(party)
+library(rpart)
+library(rpart.plot)
+# Create the tree.
+base_decision_tree =rpart(y_train~ ., data = X_train, method = "class",control = rpart.control(cp = 0.008))
+rpart.plot(base_decision_tree,extra='auto')
+```
+Compute the training_accuracy
+```{r}
+y_pred_train_base_decision_tree = predict(base_decision_tree, X_train, type = "class")
+train_base_DT=confusionMatrix(table(y_pred_train_base_decision_tree,y_train))
+train_base_DT
+```
+
+Compute the testing_accuracy 
+```{r}
+# Compute the accuracy of the pruned tree
+y_pred_test_base_decision_tree = predict(base_decision_tree, X_test, type = "class")
+
+test_base_DT=confusionMatrix(table(y_pred_test_base_decision_tree,y_test))
+test_base_DT
+```
+We can notice that there is no overfitting 
+
+Using different splitting strategies like Information gain
+```{r}
+# using splitting by Information Gain
+base_decision_tree_information_gain = rpart(df_train$Churn~ ., data = X_train, method = 'class',parms = list(split ="information"))
+y_pred_information_gain=predict(base_decision_tree_information_gain,X_train,type = "class")
+print("Splitting by Information Gain")
+print('Training accuracy')
+train_info_DT=confusionMatrix(table(y_train,y_pred_information_gain))
+train_info_DT
+```
+Computing testing accuracy using information gain
+
+```{r}
+y_pred_test_information_gain=predict(base_decision_tree_information_gain,X_test,type = "class")
+print("Splitting by Information Gain")
+print('Testing accuracy')
+test_info_DT=confusionMatrix(table(y_test,y_pred_test_information_gain))
+test_info_DT
+```
+
+
+Try Prepruning 
+
+```{r}
+# Grow a tree with minsplit of 100 and max depth of 8
+decision_tree_preprun = rpart(y_train~ ., data = X_train, method = "class", 
+                   control = rpart.control(cp = 0.0001, maxdepth = 17,minsplit = 30))
+# Compute the accuracy of the pruned tree
+y_pred_train_preprun_accuracy = predict(decision_tree_preprun, X_train, type = "class")
+
+train_preprune_DT=confusionMatrix(table(y_train,y_pred_train_preprun_accuracy))
+train_preprune_DT
+```
+
+
+```{r}
+# Compute the accuracy of the pruned tree
+y_pred_test_preprun_accuracy = predict(decision_tree_preprun, X_test, type = "class")
+test_preprune_DT=confusionMatrix(table(y_test,y_pred_test_preprun_accuracy))
+```
+preprunning increased the accuracy of training data ,but the accuracy of testing decreased which means overfitting 
+
+
+Postpruning
+
+```{r}
+#Postpruning
+# Prune the DT_base_model based on the optimal cp value
+decision_tree_postpruned <- prune(base_decision_tree, cp = 0.0084)
+# Compute the accuracy of the pruned tree
+
+y_pred_train_postprun_accuracy <- predict(decision_tree_postpruned, X_train, type = "class")
+# train_accuracy_postprun <- mean(y_pred_train_postprun_accuracy == y_train)
+train_postprune_DT=confusionMatrix(table(y_train,y_pred_train_postprun_accuracy))
+train_postprune_DT
+
+y_pred_test_postprun_accuracy = predict(decision_tree_postpruned, X_test, type = "class")
+# test_accuracy_postprun <- mean(y_pred_test_postprun_accuracy == y_test)
+test_postprune_DT=confusionMatrix(table(y_test,y_pred_test_postprun_accuracy))
+
+```
+The results still the same like without prunung
+
+# Xgboost model 
+
+Load all the libraries
+
+```{r}
+library(xgboost)
+library(readr)
+library(stringr)
+library(caret)
+library(car)
+```
+Create the model
+
+```{r}
+xgb <- xgboost(data = data.matrix(X_train), 
+ label = y_train, 
+ max_depth = 3, 
+ nround=70, 
+)
+```
+Training accuracy
+```{r}
+y_pred_train_xgb=predict(xgb, data.matrix(X_train))
+
+y_pred_train_xgb=as.numeric(y_pred_train_xgb > 0.5)
+
+test_accuracy_xgb=mean(y_pred_train_xgb == df_train$Churn)
+test_accuracy_xgb
+
+train_xgb=confusionMatrix(table(y_pred_train_xgb,df_train$Churn))
+train_xgb
+```
+
+
+Testing accuracy
+```{r}
+y_pred_test_xgb=predict(xgb, data.matrix(X_test))
+y_pred_test_xgb=as.numeric(y_pred_test_xgb > 0.5)
+
+test_accuracy_xgb=mean(y_pred_test_xgb == y_test)
+test_accuracy_xgb
+
+test_xgb=confusionMatrix(table(y_pred_test_xgb,y_test))
+test_xgb
+```
+There is no over fitting 
+Q6 Deep learning
+import important libraries
+```{r}
+library(keras)
+library(mlbench) 
+library(dplyr)
+library(magrittr)
+library(neuralnet)
+library(hash)
+```
+
+# Neural network model 
+here I will try different activation functions and dropout rates to get the optimal training parameters 
+```{r}
+tensorflow::set_random_seed(42)
+activations=list('relu'
+                 ,'tanh','leaky_relu'
+                 # ,'parametric_relu'
+                 )
+dropouts=list(0.1
+              ,0.2,0.3
+              )
+best_param=hash()
+base_acc=-9999
+for( activation in activations){
+  for (drop_rate in dropouts) {
+    nn_model <- keras_model_sequential()
+    nn_model %>%
+      layer_dense(units = 128,
+                  kernel_initializer = "uniform",
+                  activation = activation,
+                  input_shape =ncol(subset(df_train, select= - c(Churn)))) %>%
+      layer_dropout(rate = drop_rate) %>%
+      layer_dense( units = 64,
+                   kernel_initializer = "uniform",
+                   activation = activation) %>%
+      layer_dropout(rate = drop_rate) %>%
+      layer_dense(units = 1,
+                  kernel_initializer = "uniform",
+                  activation = "sigmoid")  %>%
+      compile(optimizer = 'adam', loss = 'binary_crossentropy', metrics = c('accuracy') )
+
+    train_nn=fit( object = nn_model,
+          x = as.matrix(subset(df_train, select= - c(Churn))),
+          y =df_train$Churn,
+          batch_size = 32, epochs =20,
+          validation_split = 0.2 )
+
+
+
+        #Computing testing accuracy
+          y_pred_test_nn_model = nn_model %>% predict(as.matrix(subset(df_test, select= - c(Churn)))) %>% `>` (0.5) %>% k_cast("int32") %>% as.vector()
+test_nn=confusionMatrix(table(df_test$Churn,y_pred_test_nn_model))
+          if (test_nn$overall['Accuracy']>base_acc){
+            best_param[['Activation']]=activation
+            best_param[['Drop rate']]=drop_rate
+            best_param[['Accuracy']]=test_nn$overall['Accuracy']
+            base_acc=test_nn$overall['Accuracy']
+            best_test_nn_acc=test_nn
+          }
+
+  }
+  
+}
+print(best_param)
+
+
+```
+
+After trying different activation functions we found that the best activation is relu with 0.2 dropout rate
+
+# Q7
+Compare the performance of the models in terms of the following criteria: precision, recall, accuracy, F-measure. 
+
+```{r}
+models_confusionMatrixs=list(test_base_DT,
+                      test_info_DT,
+                      test_preprune_DT,
+                      test_postprune_DT,
+                      test_xgb,
+                      best_test_nn_acc)
+models=list('Base DT','Base DT with info','Pre-pruning DT','Post-pruning DT','XGBoost','DNN model')
+```
+
+
+Best Precision 
+```{r}
+idx=1
+min_idx=1
+max_idx=1
+maxi_precision=-9999
+mini_precision=99999
+for (p in models_confusionMatrixs){
+  if (p$byClass['Pos Pred Value'] > maxi_precision){
+    maxi_precision=p$byClass['Pos Pred Value']
+    max_idx=idx
+  }
+  if (p$byClass['Pos Pred Value'] < mini_precision){
+    mini_precision=p$byClass['Pos Pred Value']
+    min_idx=idx
+  }
+  idx=idx+1
+}
+print("Best precision model")
+print(models[max_idx])
+
+print("Worest precision model")
+print(models[min_idx])
+
+```
+
+Best recall 
+```{r}
+idx=1
+min_idx=1
+max_idx=1
+maxi_recall=-9999
+mini_recall=99999
+for (p in models_confusionMatrixs){
+  if (p$byClass['Sensitivity'] > maxi_recall){
+    maxi_recall=p$byClass['Sensitivity']
+    max_idx=idx
+  }
+  if (p$byClass['Sensitivity'] < mini_recall){
+    mini_recall=p$byClass['Sensitivity']
+    min_idx=idx
+  }
+  idx=idx+1
+}
+print("Best recall model")
+print(models[max_idx])
+
+print("Worest recall model")
+print(models[min_idx])
+```
+
+
+Best Accuracy 
+```{r}
+idx=1
+min_idx=1
+max_idx=1
+maxi_accuracy=-9999
+mini_accuracy=99999
+for (p in models_confusionMatrixs){
+  # print(p$overall['Accuracy'])
+  if (p$overall['Accuracy'] > maxi_accuracy){
+    maxi_accuracy=p$overall['Accuracy']
+    max_idx=idx
+  }
+  if (p$overall['Accuracy'] < mini_accuracy){
+    mini_accuracy=p$overall['Accuracy']
+    min_idx=idx
+  }
+  idx=idx+1
+}
+print("Best accuracy model")
+print(models[max_idx])
+
+print("Worest accuracy model")
+print(models[min_idx])
+
+```
+
+Best F1-score
+```{r}
+idx=1
+min_idx=1
+max_idx=1
+maxi_F1_score=-9999
+mini_F1_score=99999
+for (p in models_confusionMatrixs){
+  f_measure = 2 * ((p$byClass['Pos Pred Value'] * p$byClass['Sensitivity']) / (p$byClass['Pos Pred Value'] + p$byClass['Sensitivity']))
+  if (f_measure > maxi_F1_score){
+    maxi_F1_score=f_measure
+    max_idx=idx
+  }
+  if (f_measure < mini_F1_score){
+    mini_F1_score=f_measure
+    min_idx=idx
+  }
+  idx=idx+1
+}
+print("Best F1_score model")
+print(models[max_idx])
+
+print("Worest F1_score model")
+print(models[min_idx])
+
+```
+
+Best model 
+According to this business case:
+The highest recall model is the best because it cares of the false negative cases and this is the most important because predicting that the customers who will leave that they will stay is critical and harmful ,but predicting that the customers who will stay that they will leave is not harmful, so the best model will be XGBoost
+
+```{r}
+#XGBoost 
+test_xgb$byClass['Sensitivity']
+
+```
+Q8
+Use a ROC graph to compare the performance of the DT, XGboost & DNN techniques
+
+```{r}
+library('pROC')
+library(magrittr) # needs to be run every time you start R and want to use %>%
+library(dplyr)    # alternatively, this also loads %>%
+trained_models=list(
+  base_decision_tree,base_decision_tree_information_gain,decision_tree_preprun,
+  decision_tree_postpruned,xgb,nn_model
+)
+count=1
+for (model in trained_models) {
+  print(count)
+  if (count==5){
+    test_prob = predict(model,data.matrix(X_test), type = "response")
+  }
+  else if (count==6){
+    test_prob = model %>% predict(as.matrix(subset(df_test, select= - c(Churn)))) %>% `>` (0.5) %>% k_cast("int32") %>% as.vector()
+  }
+  else{
+    test_prob = predict(model,X_test, type = "vector")
+  }
+
+  test_roc = roc(y_test ~ test_prob, plot = TRUE, print.auc = TRUE)
+
+  # as.numeric(test_roc$auc)
+  count=count+1
+  
+}
+
+```
+
+The best ROC accuracy is XGBoost with AUC =0.832
+
+
+
+
+
+
+
+
+
+
